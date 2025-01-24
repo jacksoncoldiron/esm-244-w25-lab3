@@ -13,12 +13,45 @@ library(here)
 t_df<-read_csv(here("data", "titanic_survival.csv"))
 ```
 
+1. What is your research question?
+
+2. Gather data
+
+3. Develop a hypothesis
+
+    Methodology: map out the plan, get psuedocode
+
+    Clean data / ID variables
+
+    Exploratory Data Analysis
+
+
 
 ## ML Framework
 
 Write a description of how you go about applying machine learning problems. If you drew a diagram, share with a neighbor and discuss.
 
+4. Choosing metrics
 
+5. Data split into testing and training
+
+6. Build model
+
+    a. Create our model options, what variables
+    
+    b. Data preprocessing
+    
+    c. Train model 
+    
+    d. Tune our model
+    
+    e. Evaluate performance
+    
+    f. Model selection
+    
+7. Finalize the model (aka train on whole dataset)
+
+8. Interpret results / visualize / communicate 
 
 
 ## Tidymodels Overview
@@ -39,8 +72,33 @@ In real life, we would have to go out and collect the data. Today, we will use t
 
 ## Data Exploration/Cleaning
 
+Cabin missing a lot of data - change to yes or no cabin
+
 Take 15 minutes to explore the data. Are there any immediate changes to the data that we need to change? What relationships can you see through graphs? What variables could be of interest to predict survival of passengers on the Titanic?
 
+sib_sp: siblings or spouse
+parch: parents and children
+pclass: class
+
+
+Variables of interest: age, sex, sib_sp, parch, pclass
+Variables we don't need: passenger_id, ticket, names
+Unsure: cabin, embarked
+
+Insights
+- fare could be collinear with pclass
+- lots of na in age, sibling and parents
+
+
+```{r}
+summary(t_df)
+
+surv_df <- t_df |>
+  mutate(survived = factor(survived),           ### categorical outcome variables need to factors
+         pclass = factor(pclass)) |>            ### categorical outcome variables need to factors
+  select(-cabin, -ticket)
+```
+Variables to include: class, age, sex, embark
 
 
 ## Data Split
@@ -62,7 +120,7 @@ Tidymodels will split the data and label it for us.
 ```{r}
 set.seed(123)
 
-surv_split <- initial_split(surv_df, prop = 0.80,strata = survived)
+surv_split <- initial_split(surv_df, prop = 0.80, strata = survived)
   ### stratified on `survived`; training and test splits will both have ~60/40% survived = 0/1
 surv_train_df <- training(surv_split)
 surv_test_df <- testing(surv_split)
@@ -95,7 +153,7 @@ Constructing models in `tidymodels` is frighteningly simple. We tell R which kin
 log_md <- logistic_reg() %>%
   set_engine("glm")
 
-lasso_md<- logistic_reg(penalty = 0.037,mixture=1) %>%
+lasso_md <- logistic_reg(penalty = 0.037,mixture=1) %>%
   set_engine("glmnet")
 ```
 
@@ -111,12 +169,12 @@ glm_rec<-recipe(survived ~ sex + pclass, data = surv_train_df)
 # steps we need to do to prepare data for lasso
 
 lasso_rec<-recipe(survived~.,data=surv_train_df) %>%
-  update_role(passenger_id, new_role = "ID") %>%
-  step_rm(name,age) %>%
-  step_unknown(all_nominal(),-all_outcomes()) |> 
-  step_dummy(all_nominal(),-all_outcomes()) |>
-  step_zv(all_numeric(),-all_outcomes()) |> 
-  step_normalize(all_numeric(),-all_outcomes())
+  update_role(passenger_id, new_role = "ID") %>%       # role is not a predictor, but just a market, don't run
+  step_rm(name,age) %>%                                # don't consider name and age because too many NA
+  step_unknown(all_nominal(),-all_outcomes()) |>       # if you see NA, make a new factor class called unknown
+  step_dummy(all_nominal(),-all_outcomes()) |>         # category is recognized as dummy
+  step_zv(all_numeric(),-all_outcomes()) |>            # zero variance 
+  step_normalize(all_numeric(),-all_outcomes())        # all numeric data normalized
 
 ```
 
@@ -127,19 +185,30 @@ First we create a workflow that combines all the models and the receipes to cont
 
 ```{r}
 # First the logistic regression
-
 log_wf <- workflow() %>%
   add_recipe(glm_rec) %>%
   add_model(log_md) 
 
-log_fit<-log_wf %>%
+log_fit <- log_wf %>%
   fit(surv_train_df)
 
-log_test<-surv_test_df |>
+log_test <- surv_test_df |>
   mutate(predict(log_fit, new_data = surv_test_df)) |> 
-  mutate(predict(log_fit,new_data = surv_test_df, type='prob'))
+  mutate(predict(log_fit, new_data = surv_test_df, type = 'prob'))
 
 table(log_test$survived, log_test$.pred_class)
+lasso_wf <- workflow() %>%
+  add_recipe(lasso_rec) %>%
+  add_model(lasso_md) 
+
+lasso_fit <- lasso_wf %>%
+  fit(surv_train_df)
+
+lasso_test <- surv_test_df |>
+  mutate(predict(lasso_fit, new_data = surv_test_df)) |> 
+  mutate(predict(lasso_fit, new_data = surv_test_df, type = 'prob'))
+
+table(lasso_test$survived, lasso_test$.pred_class)
 
 ```
 
@@ -149,6 +218,18 @@ Now fill in the following code chunk to fit the lasso model. Create a table (or 
 
 ```{r}
 
+lasso_wf <- workflow() %>%
+  add_recipe(lasso_rec) %>%
+  add_model(lasso_md) 
+
+lasso_fit <- lasso_wf %>%
+  fit(surv_train_df)
+
+lasso_test <- surv_test_df |>
+  mutate(predict(lasso_fit, new_data = surv_test_df)) |> 
+  mutate(predict(lasso_fit, new_data = surv_test_df, type = 'prob'))
+
+table(lasso_test$survived, lasso_test$.pred_class)
 
 ```
 
@@ -169,6 +250,12 @@ Calculate the `ROC AUC` for each model. Use the `roc_auc` function from yardstic
 
 ```{r}
 
+log_test |>
+  yardstick::roc_auc(truth = survived, .pred_0)
+
+lasso_test |>
+  yardstick::roc_auc(truth = survived, .pred_0)
+
 ```
 
 
@@ -181,12 +268,12 @@ One run of the model is not enough to determine which model is better. We need t
 ```{r}
 set.seed(12)
 
-folds<-vfold_cv(surv_train_df, v=10, strata = survived)
+folds <- vfold_cv(surv_train_df, v=10, strata = survived)
 
-log_fit_folds<- log_fit |> 
+log_wf_folds<- log_wf |> 
   fit_resamples(folds)
 
-collect_metrics(log_fit_folds)
+collect_metrics(log_wf_folds)
 
 lasso_res<-lasso_wf %>%
   fit_resamples(folds)
@@ -216,6 +303,9 @@ We will finalize the model by fitting the model to the entire dataset.
 ```{r}
 final_log<-log_wf |>
   last_fit(surv_split)
+
+useable_log <- final_log |>
+extract_fit_parsnip()
 ```
 
 
@@ -229,7 +319,7 @@ final_log |>
   extract_fit_parsnip() |>
   tidy() |> 
   mutate(odds=exp(estimate),
-         prob=odds/(1+estimate))
+         prob=odds/(1+odds))
 ```
 
 Please give this a go on your own with the post-lab exercise. I will be walking around to assist.
